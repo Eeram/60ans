@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Stage Sound Pad</title>
+<style>
+:root{
+  --bg:#0d0c0a; --surface:#191713; --surface-2:#211e19; --line:#2e2a23;
+  --text:#f1ece1; --muted:#8d8577;
+  --amber:#ffb021; --amber-dim:rgba(255,176,33,.14);
+  --green:#8fd18a;
+  --radius:16px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:-apple-system,'Segoe UI',Roboto,sans-serif;
+  padding:16px 14px 40px; max-width:560px; margin:0 auto;
+  user-select:none;-webkit-user-select:none;
+}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+h1{font-size:15px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--muted)}
+#stopAll{background:var(--surface);border:1px solid var(--line);color:var(--text);
+  font-size:13px;font-weight:600;padding:9px 14px;border-radius:99px}
+#stopAll:active{background:var(--surface-2)}
+#importBtn{
+  width:100%;padding:14px;margin-bottom:14px;border-radius:12px;
+  border:1px dashed #4a4335;background:var(--surface);color:var(--amber);
+  font-size:14px;font-weight:600;
+}
+#importBtn:active{background:var(--surface-2)}
+#importBtn.done{border-style:solid;color:var(--green);border-color:rgba(143,209,138,.4)}
+.tabs{display:flex;gap:8px;margin-bottom:14px}
+.tab{flex:1;padding:13px 0;text-align:center;border-radius:12px;
+  background:var(--surface);border:1px solid var(--line);
+  font-size:14px;font-weight:700;letter-spacing:.06em;color:var(--muted);position:relative}
+.tab.active{color:var(--text);border-color:#4a4335;background:var(--surface-2)}
+.tab .dot{position:absolute;top:7px;right:9px;width:7px;height:7px;border-radius:50%;
+  background:var(--amber);opacity:0;transition:opacity .3s}
+.tab.playing .dot{opacity:1;animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.fade-row{display:flex;align-items:center;gap:12px;margin-bottom:16px;font-size:12px;color:var(--muted)}
+.fade-row input[type=range]{flex:1;accent-color:var(--amber)}
+.fade-row .val{min-width:34px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
+.pads{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pad{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  min-height:104px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
+.pad:active{filter:brightness(1.2)}
+.pad.active{border-color:var(--amber);background:linear-gradient(var(--amber-dim),var(--surface))}
+.pad.nofile{opacity:.55}
+.pad .name{font-size:14px;font-weight:600;line-height:1.3;word-break:break-word}
+.pad .sub{font-size:11px;color:var(--muted);margin-top:8px;font-variant-numeric:tabular-nums}
+.pad.active .sub{color:var(--amber)}
+.pad .reset{position:absolute;top:6px;right:6px;width:28px;height:28px;border-radius:50%;
+  border:none;background:transparent;color:var(--muted);font-size:15px;line-height:1}
+.pad .progress{position:absolute;left:0;bottom:0;height:3px;width:0%;background:var(--amber)}
+.hint{font-size:11.5px;color:var(--muted);text-align:center;margin-top:18px;line-height:1.6}
+#err{display:none;margin-top:14px;padding:10px 12px;border:1px solid #7a3b3b;border-radius:10px;color:#ff9b9b;font-size:12px}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Stage Sound Pad</h1>
+  <button id="stopAll">■ Stop</button>
+</header>
+
+<button id="importBtn">📂 Importer les musiques (sélection multiple)</button>
+
+<div class="tabs" id="tabs"></div>
+<div class="fade-row">
+  <span>Crossfade</span>
+  <input type="range" id="fadeSlider" min="0.5" max="8" step="0.5" value="3">
+  <span class="val" id="fadeVal">3.0s</span>
+</div>
+<div class="pads" id="pads"></div>
+<div id="err"></div>
+<p class="hint">Importe tous les MP3 d'un coup — ils se rangent tout seuls sur les bons pads.<br>
+Tap : crossfade vers cette musique (reprend où elle s'était arrêtée).<br>
+Re-tap sur la musique en cours : fondu vers le silence. ⟲ remet à zéro.</p>
+
+<input type="file" id="filePicker" accept="audio/*,.mp3" multiple>
+<div id="audio-holder" style="display:none"></div>
+
+<script>
+const ACTS = ['Acte I','Acte II','Acte III'];
+
+// Predefined pads with filename-matching keywords
+const PADS = [
+  {act:0, name:'Medieval — fond',               keys:['medieval','dwarf','fantasy_medieval']},
+  {act:0, name:'Magical Fantasy',               keys:['magical']},
+  {act:0, name:'Vangelis — Conquest of Paradise', keys:['vangelis','conquest','paradise']},
+  {act:1, name:'Boccherini — Minuet',           keys:['boccherini','minuet']},
+  {act:1, name:'Marche Nuptiale',               keys:['marche','nuptiale','wedding','mendelssohn','marriage']},
+  {act:2, name:'The Entertainer',               keys:['entertainer','joplin']},
+  {act:2, name:'Concerning Hobbits',            keys:['hobbit']},
+  {act:2, name:'Samba De Janeiro',              keys:['samba','bellini','janeiro']},
+  {act:2, name:'Yakety Sax',                    keys:['yakety','randolph','sax']},
+];
+
+let ctx = null;
+function audioCtx(){
+  if(!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if(ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+const tracks = PADS.map((p,i)=>({ ...p, idx:i, el:null, gain:null, playing:false, fileName:null }));
+let current = null;
+let fade = 3;
+let currentAct = 0;
+
+function showErr(msg){
+  const e = document.getElementById('err');
+  e.textContent = msg;
+  e.style.display = 'block';
+}
+
+function fadeGain(t, target, dur){
+  const c = audioCtx();
+  const g = t.gain.gain;
+  const now = c.currentTime;
+  g.cancelScheduledValues(now);
+  g.setValueAtTime(g.value, now);
+  g.linearRampToValueAtTime(target, now + Math.max(0.05, dur));
+}
+
+function normalize(s){
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+
+function attachFile(t, file){
+  if(t.el){ t.el.pause(); t.el.remove(); t.gain = null; }
+  const el = document.createElement('audio');
+  el.src = URL.createObjectURL(file);
+  el.loop = true;
+  el.preload = 'auto';
+  el.setAttribute('playsinline','');
+  document.getElementById('audio-holder').appendChild(el);
+  el.load();
+  t.el = el;
+  t.playing = false;
+  t.fileName = file.name;
+}
+
+function connect(t){
+  if(t.gain || !t.el) return;
+  const c = audioCtx();
+  const src = c.createMediaElementSource(t.el);
+  t.gain = c.createGain();
+  t.gain.gain.value = 0;
+  src.connect(t.gain).connect(c.destination);
+}
+
+// ---------- Import ----------
+const picker = document.getElementById('filePicker');
+document.getElementById('importBtn').onclick = ()=> picker.click();
+picker.addEventListener('change', ()=>{
+  const files = Array.from(picker.files || []);
+  picker.value = '';
+  if(!files.length) return;
+  let matched = 0;
+  const leftovers = [];
+  files.forEach(f=>{
+    const n = normalize(f.name);
+    const pad = tracks.find(t => t.keys && t.keys.some(k => n.includes(k)));
+    if(pad){ attachFile(pad, f); matched++; }
+    else leftovers.push(f);
+  });
+  // Unmatched files become extra pads in the current act
+  leftovers.forEach(f=>{
+    const t = { act: currentAct, name: f.name.replace(/\.[^.]+$/,''), keys:null,
+                idx: tracks.length, el:null, gain:null, playing:false, fileName:null };
+    tracks.push(t);
+    attachFile(t, f);
+  });
+  const btn = document.getElementById('importBtn');
+  const loaded = tracks.filter(t=>t.el).length;
+  btn.textContent = `✓ ${loaded}/${tracks.length} musiques chargées — réimporter`;
+  btn.classList.add('done');
+  render();
+});
+
+// ---------- Playback ----------
+function tap(t){
+  if(!t.el) { picker.click(); return; }
+  try{ audioCtx(); connect(t); }catch(e){ showErr('Audio init: ' + e.message); }
+
+  if(current === t && t.playing){
+    fadeGain(t, 0, fade);
+    t.playing = false;
+    const el = t.el;
+    setTimeout(()=>{ if(!t.playing) el.pause(); }, fade*1000+100);
+    current = null;
+  } else {
+    if(current && current.playing){
+      const prev = current;
+      fadeGain(prev, 0, fade);
+      prev.playing = false;
+      setTimeout(()=>{ if(!prev.playing) prev.el.pause(); }, fade*1000+100);
+    }
+    const p = t.el.play();
+    if(p) p.catch(e => showErr('Lecture bloquée: ' + e.name + ' — ' + e.message
+      + ' (ouvre ce fichier dans Safari plutôt que dans la visionneuse Claude)'));
+    fadeGain(t, 1, fade);
+    t.playing = true;
+    current = t;
+  }
+  render();
+}
+
+function resetTrack(t, e){
+  e.stopPropagation();
+  if(t.el) t.el.currentTime = 0;
+  render();
+}
+
+function stopAll(){
+  tracks.forEach(t=>{
+    if(t.playing){
+      fadeGain(t, 0, fade);
+      t.playing = false;
+      const el = t.el;
+      setTimeout(()=>{ if(!t.playing) el.pause(); }, fade*1000+100);
+    }
+  });
+  current = null;
+  render();
+}
+
+function fmt(s){
+  if(!isFinite(s)) return '0:00';
+  s = Math.floor(s);
+  return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+}
+
+// ---------- UI ----------
+const tabsEl = document.getElementById('tabs');
+const padsEl = document.getElementById('pads');
+
+function render(){
+  tabsEl.innerHTML = '';
+  ACTS.forEach((name,i)=>{
+    const playing = tracks.some(t=>t.act===i && t.playing);
+    const b = document.createElement('button');
+    b.className = 'tab' + (i===currentAct?' active':'') + (playing?' playing':'');
+    b.innerHTML = name + '<span class="dot"></span>';
+    b.onclick = ()=>{ currentAct = i; render(); };
+    tabsEl.appendChild(b);
+  });
+
+  padsEl.innerHTML = '';
+  tracks.filter(t=>t.act===currentAct).forEach(t=>{
+    const pad = document.createElement('div');
+    pad.className = 'pad' + (t.playing?' active':'') + (t.el?'':' nofile');
+    pad.dataset.idx = t.idx;
+
+    const nm = document.createElement('div');
+    nm.className = 'name';
+    nm.textContent = t.name;
+
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = !t.el ? 'Pas de fichier — importer' :
+      (t.playing ? '● En cours' : (t.el.currentTime>0.5 ? '⏸ ' + fmt(t.el.currentTime) : 'Prêt'));
+
+    const rst = document.createElement('button');
+    rst.className = 'reset';
+    rst.textContent = '⟲';
+    rst.onclick = e => resetTrack(t, e);
+
+    const prog = document.createElement('div');
+    prog.className = 'progress';
+
+    pad.append(nm, sub, rst, prog);
+    pad.onclick = ()=> tap(t);
+    padsEl.appendChild(pad);
+  });
+}
+
+setInterval(()=>{
+  tracks.filter(t=>t.act===currentAct && t.el).forEach(t=>{
+    const pad = padsEl.querySelector(`[data-idx="${t.idx}"]`);
+    if(!pad) return;
+    const bar = pad.querySelector('.progress');
+    const sub = pad.querySelector('.sub');
+    if(t.el.duration) bar.style.width = (t.el.currentTime/t.el.duration*100) + '%';
+    if(t.playing) sub.textContent = '● ' + fmt(t.el.currentTime);
+  });
+}, 500);
+
+document.getElementById('fadeSlider').addEventListener('input', e=>{
+  fade = parseFloat(e.target.value);
+  document.getElementById('fadeVal').textContent = fade.toFixed(1)+'s';
+});
+document.getElementById('stopAll').addEventListener('click', stopAll);
+
+render();
+</script>
+</body>
+</html>
