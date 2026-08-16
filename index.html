@@ -76,7 +76,7 @@ input[type=file]{display:none}
 </div>
 <div class="pads" id="pads"></div>
 <div id="err"></div>
-<p class="hint">Importe tous les MP3 d'un coup — ils se rangent tout seuls sur les bons pads.<br>
+<p class="hint">L'écran reste allumé pendant la lecture (wake lock).<br>Importe tous les MP3 d'un coup — ils se rangent tout seuls sur les bons pads.<br>
 Tap : crossfade vers cette musique (reprend où elle s'était arrêtée).<br>
 Re-tap sur la musique en cours : fondu vers le silence. ⟲ remet à zéro.</p>
 
@@ -101,9 +101,54 @@ const PADS = [
 
 let ctx = null;
 function audioCtx(){
-  if(!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if(!ctx){
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx.onstatechange = ()=>{
+      if(ctx.state !== 'running' && current && current.playing) ctx.resume().catch(()=>{});
+    };
+  }
   if(ctx.state === 'suspended') ctx.resume();
   return ctx;
+}
+
+// --- Background playback helpers ---
+// Silent looping element (NOT routed through WebAudio) keeps the iOS audio session alive
+let keepAlive = null;
+function startKeepAlive(){
+  if(keepAlive) return;
+  const silence = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+  keepAlive = document.createElement('audio');
+  keepAlive.src = silence;
+  keepAlive.loop = true;
+  keepAlive.setAttribute('playsinline','');
+  document.getElementById('audio-holder').appendChild(keepAlive);
+  keepAlive.play().catch(()=>{});
+}
+
+// Screen wake lock so the phone never sleeps during the show
+let wakeLock = null;
+async function requestWakeLock(){
+  try{
+    if('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+  }catch(e){}
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'visible'){
+    requestWakeLock();
+    if(ctx && ctx.state !== 'running') ctx.resume().catch(()=>{});
+    if(current && current.playing && current.el.paused) current.el.play().catch(()=>{});
+  }
+});
+
+function updateMediaSession(t){
+  if(!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: t ? t.name : 'Stage Sound Pad',
+    artist: '60 ans Isabelle & Christophe',
+    album: ACTS[t ? t.act : 0]
+  });
+  navigator.mediaSession.setActionHandler('play', ()=>{ if(current) tap(current); });
+  navigator.mediaSession.setActionHandler('pause', ()=>{ if(current) tap(current); });
 }
 
 const tracks = PADS.map((p,i)=>({ ...p, idx:i, el:null, gain:null, playing:false, fileName:null }));
@@ -200,12 +245,15 @@ function tap(t){
       prev.playing = false;
       setTimeout(()=>{ if(!prev.playing) prev.el.pause(); }, fade*1000+100);
     }
+    startKeepAlive();
+    requestWakeLock();
     const p = t.el.play();
     if(p) p.catch(e => showErr('Lecture bloquée: ' + e.name + ' — ' + e.message
       + ' (ouvre ce fichier dans Safari plutôt que dans la visionneuse Claude)'));
     fadeGain(t, 1, fade);
     t.playing = true;
     current = t;
+    updateMediaSession(t);
   }
   render();
 }
